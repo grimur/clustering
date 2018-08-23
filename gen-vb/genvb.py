@@ -35,10 +35,6 @@ class Generative(object):
         self.zeta = numpy.random.random((self.M, self.K))
         self.beta = numpy.random.random((self.V, self.K))
 
-        print self.alpha
-        print self.beta
-        print self.zeta
-
         # Do these need further initialisation?
         # see section 4.3, footnote 4
         self.alpha_0 = 1.0
@@ -50,20 +46,21 @@ class Generative(object):
         # m-step updates alpha, zeta, beta.
 
         # this is updating gamma, see post-eq. 17
+        t2 = digamma(numpy.sum(self.alpha))
         for m in xrange(self.M):
-            for i in xrange(self.V):
-                # Symmetric in i and j, but include the diagonal.
-                for j in xrange(i + 1):
-                    for k in xrange(self.K):
-                        t1 = digamma(self.alpha[k])
-                        t2 = digamma(numpy.sum(self.alpha))
-                        t3 = digamma(self.zeta[m, k])
-                        t4 = digamma(numpy.sum(self.zeta[:, k]))
+            for k in xrange(self.K):
+                t1 = digamma(self.alpha[k])
+                t4 = digamma(numpy.sum(self.zeta[:, k]))
+                t7 = 2 * digamma(numpy.sum(self.beta[:, k]))
+                t3 = digamma(self.zeta[m, k])
+                for i in xrange(self.V):
+                    # Symmetric in i and j, but include the diagonal.
+                    for j in xrange(i + 1):
                         t5 = digamma(self.beta[i, k])
                         t6 = digamma(self.beta[j, k])
-                        t7 = 2 * digamma(numpy.sum(self.beta[:, k]))
-                        self.gamma[m, i, j, k] = t1 - t2 + t3 - t4 + t5 + t6 - t7
-                        self.gamma[m, j, i, k] = t1 - t2 + t3 - t4 + t5 + t6 - t7
+                        g = t1 - t2 + t3 - t4 + t5 + t6 - t7
+                        self.gamma[m, i, j, k] = g
+                        self.gamma[m, j, i, k] = g
 
         # this is eqn 17
         for m in xrange(self.M):
@@ -74,40 +71,47 @@ class Generative(object):
                     gamma_exp = [numpy.exp(x) for x in gamma_vector]
                     gamma_exp_sum = numpy.sum(gamma_exp)
                     for k in xrange(self.K):
-                        self.z[m, i, j, k] = gamma_exp[k] / gamma_exp_sum
-                        self.z[m, j, i, k] = gamma_exp[k] / gamma_exp_sum
+                        q = gamma_exp[k] / gamma_exp_sum
+                        self.z[m, i, j, k] = q
+                        self.z[m, j, i, k] = q
+
+        # print self.z
 
     def update_m(self):
         # eqns 11 - 16
         # update alpha_k -- number of clusters
 
-        # eq 11
-        N_k = numpy.zeros((self.K))
-        for k in xrange(self.K):
-            value = 0
-            for m in xrange(self.M):
-                for i in xrange(self.V):
-                    for j in xrange(i + 1):
-                        # if self.weights[m, i, j] > 0:
-                            value += self.z[m, i, j, k] * self.weights[m, i, j]
-            N_k[k] = value
+        # Calculated from eq 12
+        # # eq 11
+        # N_k = numpy.zeros((self.K))
+        # for k in xrange(self.K):
+        #     value = 0.0
+        #     for m in xrange(self.M):
+        #         for i in xrange(self.V):
+        #             for j in xrange(i + 1):
+        #                 # if self.weights[m, i, j] > 0:
+        #                     value += self.z[m, i, j, k] * self.weights[m, i, j]
+        #     N_k[k] = value
 
         # eq 12
         N_mk = numpy.zeros((self.M, self.K))
         for k in xrange(self.K):
             for m in xrange(self.M):
-                value = 0
+                value = 0.0
                 for i in xrange(self.V):
                     for j in xrange(i + 1):
                         # if self.weights[m, i, j] > 0:
                             value += self.z[m, i, j, k] * self.weights[m, i, j]
                 N_mk[m, k] = value
 
+        # eq 11
+        N_k = N_mk.sum(axis=0)
+
         # eq 13
         N_ik = numpy.zeros((self.V, self.K))
         for k in xrange(self.K):
             for i in xrange(self.V):
-                value = 0
+                value = 0.0
                 for m in xrange(self.M):
                     for j in xrange(self.V):
                         # if self.weights[m, i, j] > 0:
@@ -118,11 +122,28 @@ class Generative(object):
         # eq 14
         self.alpha = N_k + self.alpha_0
 
+        # q_pi = gamma(numpy.sum(self.alpha))
+        # q_pi /= numpy.prod([gamma(x) for x in self.alpha])
+        # q_pi *= numpy.prod([x**(y - 1) for x, y in zip(self.pi, self.alpha)])
+        # print 'q_pi', q_pi
+
         # eq 15
         self.zeta = N_mk + self.zeta_0
 
+        # for k in xrange(self.K):
+        #     q_eta = gamma(numpy.sum(self.zeta[:, k]))
+        #     q_eta /= numpy.prod([gamma(x) for x in self.zeta[:, k]])
+        #     q_eta *= numpy.prod([x**(y - 1) for x, y in zip(self.eta[:, k], self.zeta[:, k])])
+        #     print 'q_eta', q_eta
+
         # eq 16
         self.beta = 2 * N_ik + self.beta_0
+
+        # for k in xrange(self.K):
+        #     q_beta = gamma(numpy.sum(self.beta[:, k]))
+        #     q_beta /= numpy.prod([gamma(x) for x in self.beta[:, k]])
+        #     q_beta *= numpy.prod([x**(y - 1) for x, y in zip(self.r[:, k], self.beta[:, k])])
+        #     print 'q_beta', q_beta
 
     @property
     def pi(self):
@@ -304,3 +325,27 @@ def test3():
     r.fit()
     print r.prob_matrix()
 
+
+def test4():
+    # most definitely a bug, b/c consistently lower objective function...
+    a = numpy.array([[[1, 1, 1, 0, 1, 0],
+                      [1, 1, 1, 0, 0, 1],
+                      [1, 1, 1, 1, 0, 0],
+                      [0, 0, 1, 1, 0, 0],
+                      [1, 0, 0, 0, 1, 0],
+                      [0, 1, 0, 0, 0, 1]],
+
+                     [[1, 1, 0, 1, 0, 0],
+                      [1, 1, 1, 0, 1, 0],
+                      [0, 1, 1, 0, 0, 1],
+                      [1, 0, 0, 1, 1, 1],
+                      [0, 1, 0, 1, 1, 1],
+                      [0, 0, 1, 1, 1, 1]]], dtype='float')
+
+    a = numpy.array([a[0], a[1], numpy.random.random((6, 6))])
+
+    r = Generative(a, 2)
+    r.fit()
+    print r.prob_matrix()
+
+    # r = Generative(numpy.array([a[0] + a[1] + a[2]]), 2)
