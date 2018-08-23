@@ -22,21 +22,25 @@ class Generative(object):
         self.gamma = numpy.random.random((self.M, self.V, self.V, self.K))
         self.z = numpy.random.random((self.M, self.V, self.V, self.K))
 
+        # self.gamma = numpy.zeros((self.M, self.V, self.V, self.K))
+        # self.z = numpy.zeros((self.M, self.V, self.V, self.K))
+
+        # Ensure symmetry
+        for i in xrange(self.V):
+            for j in xrange(self.V):
+                self.gamma[:, i, j, :] = self.gamma[:, j, i, :]
+                self.z[:, i, j, :] = self.z[:, j, i, :]
+
         self.alpha = numpy.random.random((self.K))
         self.zeta = numpy.random.random((self.M, self.K))
         self.beta = numpy.random.random((self.V, self.K))
 
-        # Used in objective function
-        self.q_pi = 0
-        self.q_eta = numpy.zeros((self.K))
-        self.q_r = numpy.zeros((self.K))
+        print self.alpha
+        print self.beta
+        print self.zeta
 
-        # These need to be properly initialised?
+        # Do these need further initialisation?
         # see section 4.3, footnote 4
-
-        # self.alpha_0 = numpy.ones((self.K))
-        # self.zeta_0 = numpy.ones((self.M, self.K))
-        # self.beta_0 = numpy.ones((self.V, self.K))
         self.alpha_0 = 1.0
         self.beta_0 = 1.0
         self.zeta_0 = 1.0
@@ -46,10 +50,10 @@ class Generative(object):
         # m-step updates alpha, zeta, beta.
 
         # this is updating gamma, see post-eq. 17
-        # TODO: Optimise. This is symmetric in i and j
         for m in xrange(self.M):
             for i in xrange(self.V):
-                for j in xrange(self.V):
+                # Symmetric in i and j, but include the diagonal.
+                for j in xrange(i + 1):
                     for k in xrange(self.K):
                         t1 = digamma(self.alpha[k])
                         t2 = digamma(numpy.sum(self.alpha))
@@ -59,16 +63,19 @@ class Generative(object):
                         t6 = digamma(self.beta[j, k])
                         t7 = 2 * digamma(numpy.sum(self.beta[:, k]))
                         self.gamma[m, i, j, k] = t1 - t2 + t3 - t4 + t5 + t6 - t7
+                        self.gamma[m, j, i, k] = t1 - t2 + t3 - t4 + t5 + t6 - t7
 
         # this is eqn 17
-        # TODO: Optimise. This is symmetric in i and j
         for m in xrange(self.M):
             for i in xrange(self.V):
-                for j in xrange(self.V):
+                # Symmetric, including diagonal
+                for j in xrange(i + 1):
                     gamma_vector = self.gamma[m, i, j, :]
                     gamma_exp = [numpy.exp(x) for x in gamma_vector]
+                    gamma_exp_sum = numpy.sum(gamma_exp)
                     for k in xrange(self.K):
-                        self.z[m, i, j, k] = gamma_exp[k] / numpy.sum(gamma_exp)
+                        self.z[m, i, j, k] = gamma_exp[k] / gamma_exp_sum
+                        self.z[m, j, i, k] = gamma_exp[k] / gamma_exp_sum
 
     def update_m(self):
         # eqns 11 - 16
@@ -80,8 +87,9 @@ class Generative(object):
             value = 0
             for m in xrange(self.M):
                 for i in xrange(self.V):
-                    for j in xrange(i):
-                        value += self.z[m, i, j, k] * self.weights[m, i, j]
+                    for j in xrange(i + 1):
+                        # if self.weights[m, i, j] > 0:
+                            value += self.z[m, i, j, k] * self.weights[m, i, j]
             N_k[k] = value
 
         # eq 12
@@ -90,8 +98,9 @@ class Generative(object):
             for m in xrange(self.M):
                 value = 0
                 for i in xrange(self.V):
-                    for j in xrange(i):
-                        value += self.z[m, i, j, k] * self.weights[m, i, j]
+                    for j in xrange(i + 1):
+                        # if self.weights[m, i, j] > 0:
+                            value += self.z[m, i, j, k] * self.weights[m, i, j]
                 N_mk[m, k] = value
 
         # eq 13
@@ -101,25 +110,19 @@ class Generative(object):
                 value = 0
                 for m in xrange(self.M):
                     for j in xrange(self.V):
-                        value += self.z[m, i, j, k] * self.weights[m, i, j]
+                        # if self.weights[m, i, j] > 0:
+                            value += self.z[m, i, j, k] * self.weights[m, i, j]
                 N_ik[i, k] = value
 
+        # Note that none of the actual parameter distributions are used!
         # eq 14
         self.alpha = N_k + self.alpha_0
-        self.q_pi = gamma(numpy.sum(self.alpha)) / \
-            numpy.prod([gamma(x) for x in self.alpha]) * \
-            numpy.prod([x**(y-1) for x, y in zip(self.pi, self.alpha)])
 
         # eq 15
         self.zeta = N_mk + self.zeta_0
-        for k in xrange(self.K):
-            self.q_eta[k] = gamma(numpy.sum(self.zeta[:, k])) / \
-                numpy.prod([gamma(x) for x in self.gamma[:, k]]) * \
-                numpy.prod([x**(y-1) for x, y in zip(self.eta[:, k], self.gamma[:, k])])
 
         # eq 16
         self.beta = 2 * N_ik + self.beta_0
-        self.q_r = 0
 
     @property
     def pi(self):
@@ -153,7 +156,7 @@ class Generative(object):
         for k in xrange(K):
             for m in xrange(M):
                 for i in xrange(N):
-                    for j in xrange(i):
+                    for j in xrange(i + 1):
                         if self.weights[m, i, j] != 0:
                             z = self.z[m, i, j, k]
                             selective_term += z * log(z)
@@ -170,19 +173,19 @@ class Generative(object):
         L -= K * M * log(gamma(zeta_0))
         L -= selective_term
         # fourth line
-        L -= log(gamma(sum(alpha)))
-        L += sum([log(gamma(a)) for a in alpha])
+        L -= log(gamma(numpy.sum(alpha)))
+        L += numpy.sum([log(gamma(a)) for a in alpha])
         # fifth line
-        L -= sum([log(gamma(x)) for x in beta.sum(axis=0)])
+        L -= numpy.sum([log(gamma(x)) for x in beta.sum(axis=0)])
         L += numpy.sum(log(gamma(beta)))
         # sixth line
-        L -= sum([log(gamma(x)) for x in zeta.sum(axis=0)])  # roughly same as line 5.1
+        L -= numpy.sum([log(gamma(x)) for x in zeta.sum(axis=0)])  # roughly same as line 5.1
         L += numpy.sum(log(gamma(zeta)))
 
         return L
 
     def prob(self, i, k):
-        # Should there be a M term here?
+        # Should there be a M term here? Or is this implicit?
         # This is adapting eqn 8 from paper, which is for a single graph!
         return self.pi[k] * self.r[i, k] / numpy.sum([p * r for p, r in zip(self.pi, self.r[i, :])])
 
@@ -201,7 +204,7 @@ class Generative(object):
     def fit(self):
         iter_threshold = 5
         max_iter = 10000
-        delta_threshold = 1e-15
+        delta_threshold = 1e-13
 
         last = None
         deltas = []
@@ -215,6 +218,7 @@ class Generative(object):
             self.update_e()
             current = self.L()
             if last:
+                print current - last
                 delta = numpy.abs(last - current)
                 deltas.append(delta)
             if len(deltas) > iter_threshold:
@@ -231,7 +235,70 @@ def test():
                      [[1, 1, 0, 0],
                       [1, 1, 0, 0],
                       [0, 0, 1, 1],
+                      [0, 0, 1, 1]],
+
+                     [[1, 1, 0, 0],
+                      [1, 1, 0, 0],
+                      [0, 0, 1, 1],
+                      [0, 0, 1, 1]],
+
+                     [[1, 1, 0, 0],
+                      [1, 1, 0, 0],
+                      [0, 0, 1, 1],
+                      [0, 0, 1, 1]],
+
+                     [[1, 1, 0, 0],
+                      [1, 1, 0, 0],
+                      [0, 0, 1, 1],
                       [0, 0, 1, 1]]])
+
+    r = Generative(a, 3)
+    r.fit()
+    print r.prob_matrix()
+
+
+def test2():
+    # most definitely a bug, b/c consistently lower objective function...
+    a = numpy.array([[[1, 1, 1, 0, 1, 0],
+                      [1, 1, 1, 0, 0, 1],
+                      [1, 1, 1, 1, 0, 0],
+                      [0, 0, 1, 1, 0, 0],
+                      [1, 0, 0, 0, 1, 0],
+                      [0, 1, 0, 0, 0, 1]],
+
+                     [[1, 1, 0, 1, 0, 0],
+                      [1, 1, 1, 0, 1, 0],
+                      [0, 1, 1, 0, 0, 1],
+                      [1, 0, 0, 1, 1, 1],
+                      [0, 1, 0, 1, 1, 1],
+                      [0, 0, 1, 1, 1, 1]],
+
+                     [[1, 0, 1, 0, 0, 1],
+                      [0, 1, 0, 1, 0, 0],
+                      [1, 0, 1, 0, 1, 0],
+                      [0, 1, 0, 1, 0, 0],
+                      [0, 0, 1, 0, 1, 0],
+                      [1, 0, 0, 0, 0, 1]]], dtype='float')
+
+    r = Generative(a, 2)
+    r.fit()
+    print r.prob_matrix()
+
+    # r = Generative(numpy.array([a[0] + a[1] + a[2]]), 2)
+    # r.fit()
+    # print r.prob_matrix()
+
+
+def test3():
+    a = numpy.array([[[0, 1, 0, 0],
+                      [1, 0, 0, 0],
+                      [0, 0, 0, 1],
+                      [0, 0, 1, 0]],
+
+                     [[0, 1, 0, 0],
+                      [1, 0, 0, 0],
+                      [0, 0, 0, 1],
+                      [0, 0, 1, 0]]])
 
     r = Generative(a, 2)
     r.fit()
